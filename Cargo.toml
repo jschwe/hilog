@@ -1,0 +1,12 @@
+[package]
+name = "hilog"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.0"
+license = "Apache-2.0"
+description = "A log and env_filter compatible logging sink for HiLog on OpenHarmony"
+
+[dependencies]
+hilog-sys = {  version = "0.1.1", features = ["log"] }
+env_filter = "0.1.0"
+log = "0.4.21"

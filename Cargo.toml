@@ -7,6 +7,13 @@ license = "Apache-2.0"
 description = "A log and env_filter compatible logging sink for HiLog on OpenHarmony"
 
 [dependencies]
-hilog-sys = {  version = "0.1.1", features = ["log"] }
+# hilog-sys = {  version = "0.1.1", features = ["log"] }
+hilog-sys = {  git = "https://github.com/jschwe/hilog-sys", features = ["log"], branch = "jschwender/fast_logging" }
 env_filter = "0.1.0"
 log = "0.4.21"
+nix = { path = "/home/jschwender/Dev/nix", features = ["socket", "process", "uio", "time"], optional = true}
+
+
+[features]
+default = ["direct-logging"]
+direct-logging = ["dep:nix", "hilog-sys/hilog-base"]

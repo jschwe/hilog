@@ -6,8 +6,12 @@
 //!
 //! [`env_logger`]: https://docs.rs/env_logger/latest/env_logger/
 
+#[cfg(feature = "direct-logging")]
+mod base;
+
 use std::ffi::{CStr, CString};
 use hilog_sys::{LogLevel, LogType, OH_LOG_IsLoggable, OH_LOG_Print};
+use hilog_sys::hilog_base::{MAX_LOG_LEN, MAX_TAG_LEN};
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 
 /// Service domain of logs
@@ -205,13 +209,44 @@ impl Log for Logger {
             return;
         }
 
-        // Todo: we could write to a fixed size array on the stack, since hilog anyway has a
-        // maximum supported size for tag and log.
-        let tag = record.module_path().and_then(|path| CString::new(path).ok())
-            .unwrap_or_default();
+        let mut path = [0; MAX_TAG_LEN];
+        let len = if let Some(module_path) = record.module_path() {
+            let len = module_path.len().clamp(0, MAX_TAG_LEN - 1);
+            path[0..len].copy_from_slice(&module_path.as_bytes()[0..len]);
+            len
+        } else {
+            0
+        };
+        // SAFETY: `len` is the length exclusive `\0`. We filled path until `len`
+        // with contents from a valid `str`, and left a terminating `0` after that.
+        let tag = unsafe { CStr::from_bytes_with_nul_unchecked(&path[0..=len]) };
+
         // Todo: I think we also need / want to split messages at newlines.
-        let message = format!("{}\0", record.args());
-        let c_msg = CString::from_vec_with_nul(message.into_bytes()).unwrap_or_default();
+        let message = format!("{}", record.args());
+        let bytes = message.into_bytes();
+        let clamped_message = if bytes.len() >= MAX_LOG_LEN {
+            let mut clamped = Vec::from(&bytes[0..MAX_LOG_LEN-1]);
+            clamped.push(0);
+            clamped
+
+        } else {
+            bytes
+        };
+        let c_msg = CString::from_vec_with_nul(clamped_message).unwrap_or_default();
+        #[cfg(feature = "direct-logging")]
+        {
+            let res = base::send_message(LogType::LOG_APP, record.level().into(), tag, c_msg.as_ref());
+            if let Err(e) = res {
+                let error_msg = format!("Failed to send log message due to: {e:?}\0");
+                let c_msg = CString::from_vec_with_nul(error_msg.into_bytes()).unwrap_or_default();
+                hilog_log(LogType::LOG_APP, LogLevel::LOG_ERROR, self.domain,
+                          c"hilog-rust",  c_msg.as_ref());
+            } else {
+                hilog_log(hilog_sys::LogType::LOG_APP, record.level().into(), self.domain, c"HILOG_RS_DBG", c"Send message returned without error code!")
+
+            }
+        }
+        #[cfg(not(feature = "direct-logging"))]
         hilog_log(hilog_sys::LogType::LOG_APP, record.level().into(), self.domain, tag.as_ref(), c_msg.as_ref())
     }
 

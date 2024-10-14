@@ -6,9 +6,16 @@
 //!
 //! [`env_logger`]: https://docs.rs/env_logger/latest/env_logger/
 
-use std::ffi::{CStr, CString};
-use hilog_sys::{LogLevel, LogType, OH_LOG_IsLoggable, OH_LOG_Print};
+mod hilog_writer;
+
+use hilog_sys::{LogLevel, LogType, OH_LOG_IsLoggable};
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
+use std::ffi::CStr;
+use std::mem::MaybeUninit;
+use std::sync::{Arc, Mutex};
+use std::{fmt, mem};
+
+pub(crate) type FormatFn = Box<dyn Fn(&mut dyn fmt::Write, &Record) -> fmt::Result + Sync + Send>;
 
 /// Service domain of logs
 ///
@@ -18,7 +25,6 @@ use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 pub struct LogDomain(u16);
 
 impl LogDomain {
-
     /// Creates a new LogDomain
     ///
     /// Valid values are 0-0xFFFF.
@@ -27,24 +33,12 @@ impl LogDomain {
     }
 }
 
-
-fn hilog_log(log_type: LogType, level: LogLevel, domain: LogDomain, tag: &CStr, msg: &CStr) {
-    let _res = unsafe {
-        OH_LOG_Print(
-            log_type,
-            level,
-            domain.0.into(),
-            tag.as_ptr(),
-            c"%{public}s".as_ptr(),
-            msg.as_ptr()
-        )
-    };
-}
-
 #[derive(Default)]
 pub struct Builder {
     filter: env_filter::Builder,
     log_domain: LogDomain,
+    log_tag: Option<String>,
+    custom_format: Option<FormatFn>,
     built: bool,
 }
 
@@ -53,12 +47,19 @@ impl Builder {
         Default::default()
     }
 
-
     /// Sets the Service domain for the logs
     ///
     /// Users can set a custom domain, which allows filtering by hilogd.
     pub fn set_domain(&mut self, domain: LogDomain) -> &mut Self {
         self.log_domain = domain;
+        self
+    }
+
+    /// Sets the tag for the logs. Maximum length is 32 characters.
+    ///
+    /// If not set, the module path will be used as the tag.
+    pub fn set_tag(&mut self, tag: &str) -> &mut Self {
+        self.log_tag = Some(tag.to_string());
         self
     }
 
@@ -69,7 +70,7 @@ impl Builder {
     /// Only include messages for info and above for logs in `path::to::module`:
     ///
     /// ```
-    /// use env_filter::Builder;
+    /// use hilog::Builder;
     /// use log::LevelFilter;
     ///
     /// let mut builder = Builder::new();
@@ -88,7 +89,7 @@ impl Builder {
     /// Only include messages for info and above for logs globally:
     ///
     /// ```
-    /// use env_filter::Builder;
+    /// use hilog::Builder;
     /// use log::LevelFilter;
     ///
     /// let mut builder = Builder::new();
@@ -110,7 +111,7 @@ impl Builder {
     /// Only include messages for info and above for logs in `path::to::module`:
     ///
     /// ```
-    /// use env_filter::Builder;
+    /// use hilog::Builder;
     /// use log::LevelFilter;
     ///
     /// let mut builder = Builder::new();
@@ -119,6 +120,34 @@ impl Builder {
     /// ```
     pub fn filter(&mut self, module: Option<&str>, level: LevelFilter) -> &mut Self {
         self.filter.filter(module, level);
+        self
+    }
+
+    /// Adds a custom format function to the logger.
+    ///
+    /// The format function will be called for each log message that would be output.
+    /// It should write the formatted log message to the provided writer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hilog::Builder;
+    /// use log::{Record, Level};
+    ///
+    /// let mut builder = Builder::new();
+    ///
+    /// builder.format(|buf, record| {
+    ///     writeln!(buf, "{}:{} - {}",
+    ///     record.file().unwrap_or("unknown"),
+    ///     record.line().unwrap_or(0),
+    ///     record.args())
+    ///  });
+    /// ```
+    pub fn format<F>(&mut self, format: F) -> &mut Self
+    where
+        F: Fn(&mut dyn fmt::Write, &Record) -> fmt::Result + Sync + Send + 'static,
+    {
+        self.custom_format = Some(Box::new(format));
         self
     }
 
@@ -168,17 +197,28 @@ impl Builder {
 
         Logger {
             domain: self.log_domain,
+            tag: self.log_tag.take(),
             filter: self.filter.build(),
+            custom_format: self.custom_format.take(),
         }
     }
-
 }
 
-
-
-pub struct Logger  {
+pub struct Logger {
     domain: LogDomain,
-    filter: env_filter::Filter
+    tag: Option<String>,
+    filter: env_filter::Filter,
+    custom_format: Option<FormatFn>,
+}
+
+use hilog_writer::HiLogWriter;
+use hilog_writer::MAX_TAG_LEN;
+
+// FIXME: When `maybe_uninit_uninit_array ` is stabilized, use it instead of this helper
+// tracker: https://github.com/rust-lang/rust/issues/96097
+fn uninit_array<const N: usize, T>() -> [MaybeUninit<T>; N] {
+    // SAFETY: Array contains MaybeUninit, which is fine to be uninit
+    unsafe { MaybeUninit::uninit().assume_init() }
 }
 
 impl Logger {
@@ -189,8 +229,23 @@ impl Logger {
     }
 
     fn is_loggable(&self, tag: &CStr, level: LogLevel) -> bool {
-        unsafe {
-            OH_LOG_IsLoggable(self.domain.0.into(), tag.as_ptr(), level)
+        unsafe { OH_LOG_IsLoggable(self.domain.0.into(), tag.as_ptr(), level) }
+    }
+
+    fn fill_tag_bytes(&self, tag_bytes: &mut [MaybeUninit<u8>], tag: &[u8]) {
+        if tag.len() > MAX_TAG_LEN {
+            for (input, output) in tag
+                .iter()
+                .take(MAX_TAG_LEN - 2)
+                .chain(b"..\0".iter())
+                .zip(tag_bytes.iter_mut())
+            {
+                output.write(*input);
+            }
+        } else {
+            for (input, output) in tag.iter().chain(b"\0".iter()).zip(tag_bytes.iter_mut()) {
+                output.write(*input);
+            }
         }
     }
 }
@@ -201,18 +256,34 @@ impl Log for Logger {
     }
 
     fn log(&self, record: &Record) {
-        if ! self.enabled(record.metadata()) {
+        if !self.enabled(record.metadata()) {
             return;
         }
 
-        // Todo: we could write to a fixed size array on the stack, since hilog anyway has a
-        // maximum supported size for tag and log.
-        let tag = record.module_path().and_then(|path| CString::new(path).ok())
-            .unwrap_or_default();
-        // Todo: I think we also need / want to split messages at newlines.
-        let message = format!("{}\0", record.args());
-        let c_msg = CString::from_vec_with_nul(message.into_bytes()).unwrap_or_default();
-        hilog_log(hilog_sys::LogType::LOG_APP, record.level().into(), self.domain, tag.as_ref(), c_msg.as_ref())
+        // truncate the tag to MAX_TAG_LEN bytes
+        let mut tag_bytes: [MaybeUninit<u8>; MAX_TAG_LEN + 1] = uninit_array();
+
+        let tag = self
+            .tag
+            .as_ref()
+            .map(|tag| tag.as_bytes())
+            .unwrap_or_else(|| record.module_path().unwrap().as_bytes());
+        self.fill_tag_bytes(&mut tag_bytes, tag);
+        let tag: &CStr = unsafe { CStr::from_ptr(mem::transmute(tag_bytes.as_ptr())) };
+
+        let mut writer = HiLogWriter::new(
+            LogType::LOG_APP,
+            record.level().into(),
+            self.domain,
+            tag.as_ref(),
+        );
+        use std::fmt::Write;
+        let _ = match &self.custom_format {
+            Some(custom_format) => custom_format(&mut writer, record),
+            None => write!(&mut writer, "{}", record.args()),
+        };
+
+        writer.flush();
     }
 
     fn flush(&self) {}

@@ -12,7 +12,6 @@ use hilog_sys::{LogLevel, LogType, OH_LOG_IsLoggable};
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
-use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 
 pub(crate) type FormatFn = Box<dyn Fn(&mut dyn fmt::Write, &Record) -> fmt::Result + Sync + Send>;

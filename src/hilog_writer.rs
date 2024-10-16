@@ -1,7 +1,6 @@
 use crate::{uninit_array, LogDomain};
 use hilog_sys::{LogLevel, LogType, OH_LOG_Print};
 use std::ffi::CStr;
-use std::fmt::format;
 use std::mem::MaybeUninit;
 use std::{fmt, mem, ptr};
 

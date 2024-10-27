@@ -271,7 +271,7 @@ impl Log for Logger {
             LogType::LOG_APP,
             record.level().into(),
             self.domain,
-            tag.as_ref(),
+            tag,
         );
         use std::fmt::Write;
         let _ = match &self.custom_format {

@@ -66,7 +66,7 @@ impl<'a> HiLogWriter<'a> {
             self.level,
             self.domain,
             self.tag,
-            c_msg.as_ref(),
+            c_msg,
         );
 
         unsafe { *self.buffer.get_unchecked_mut(len) = last_byte };

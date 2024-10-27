@@ -213,11 +213,8 @@ pub struct Logger {
 use hilog_writer::HiLogWriter;
 use hilog_writer::MAX_TAG_LEN;
 
-// FIXME: When `maybe_uninit_uninit_array ` is stabilized, use it instead of this helper
-// tracker: https://github.com/rust-lang/rust/issues/96097
 fn uninit_array<const N: usize, T>() -> [MaybeUninit<T>; N] {
-    // SAFETY: Array contains MaybeUninit, which is fine to be uninit
-    unsafe { MaybeUninit::uninit().assume_init() }
+    [const { MaybeUninit::uninit() }; N]
 }
 
 impl Logger {

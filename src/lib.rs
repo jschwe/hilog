@@ -11,8 +11,9 @@ mod hilog_writer;
 use hilog_sys::{LogLevel, LogType, OH_LOG_IsLoggable};
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::ffi::CStr;
-use std::mem::MaybeUninit;
 use std::fmt;
+use std::fmt::Write;
+use std::mem::MaybeUninit;
 
 pub(crate) type FormatFn = Box<dyn Fn(&mut dyn fmt::Write, &Record) -> fmt::Result + Sync + Send>;
 
@@ -267,13 +268,8 @@ impl Log for Logger {
         self.fill_tag_bytes(&mut tag_bytes, tag);
         let tag: &CStr = unsafe { CStr::from_ptr(tag_bytes.as_ptr().cast()) };
 
-        let mut writer = HiLogWriter::new(
-            LogType::LOG_APP,
-            record.level().into(),
-            self.domain,
-            tag,
-        );
-        use std::fmt::Write;
+        let mut writer =
+            HiLogWriter::new(LogType::LOG_APP, record.level().into(), self.domain, tag);
         let _ = match &self.custom_format {
             Some(custom_format) => custom_format(&mut writer, record),
             None => write!(&mut writer, "{}", record.args()),

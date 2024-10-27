@@ -61,13 +61,7 @@ impl<'a> HiLogWriter<'a> {
         });
 
         let c_msg: &CStr = unsafe { CStr::from_ptr(self.buffer.as_ptr().cast()) };
-        hilog_log(
-            self.log_type,
-            self.level,
-            self.domain,
-            self.tag,
-            c_msg,
-        );
+        hilog_log(self.log_type, self.level, self.domain, self.tag, c_msg);
 
         unsafe { *self.buffer.get_unchecked_mut(len) = last_byte };
     }

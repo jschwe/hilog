@@ -5,8 +5,10 @@ use std::mem::MaybeUninit;
 use std::{fmt, mem, ptr};
 
 // https://gitee.com/openharmony/hiviewdfx_hilog/blob/master/frameworks/libhilog/include/hilog_base.h#L25
-pub const MAX_LOG_LEN: usize = 4096;
-pub const MAX_TAG_LEN: usize = 32;
+/// Maximum log entry length excluding trailing `\0`.
+pub const MAX_LOG_LEN: usize = 4096 - 1;
+/// Maximum log tag length excluding trailing `\0`.
+pub const MAX_TAG_LEN: usize = 32 - 1;
 
 fn hilog_log(log_type: LogType, level: LogLevel, domain: LogDomain, tag: &CStr, msg: &CStr) {
     let _res = unsafe {
@@ -45,7 +47,6 @@ impl<'a> HiLogWriter<'a> {
     }
 
     /// Output buffer up until the \0 which will be placed at `len` position.
-    /// Safety: `len` must be less than or equal to `MAX_LOG_LEN`.
     fn output_specified_len(&mut self, mut len: usize) {
         if len == 0 {
             return;

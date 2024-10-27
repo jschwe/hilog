@@ -265,7 +265,12 @@ impl Log for Logger {
             .tag
             .as_ref()
             .map(|tag| tag.as_bytes())
-            .unwrap_or_else(|| record.module_path().unwrap().as_bytes());
+            .unwrap_or_else(|| {
+                record
+                    .module_path()
+                    .map(|path| path.as_bytes())
+                    .unwrap_or(b"unknown")
+            });
         self.fill_tag_bytes(&mut tag_bytes, tag);
         let tag: &CStr = unsafe { CStr::from_ptr(tag_bytes.as_ptr().cast()) };
 

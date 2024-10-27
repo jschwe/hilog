@@ -1,8 +1,8 @@
 [package]
 name = "hilog"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-rust-version = "1.77.0"
+rust-version = "1.78.0"
 license = "Apache-2.0"
 description = "A log and env_filter compatible logging sink for HiLog on OpenHarmony"
 

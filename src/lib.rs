@@ -55,9 +55,10 @@ impl Builder {
         self
     }
 
-    /// Sets the tag for the logs. Maximum length is 32 characters.
+    /// Sets the tag for the logs. Maximum length is 31 bytes.
     ///
     /// If not set, the module path will be used as the tag.
+    /// If the provided tag is longer than 31 bytes it will be truncated.
     pub fn set_tag(&mut self, tag: &str) -> &mut Self {
         self.log_tag = Some(tag.to_string());
         self
